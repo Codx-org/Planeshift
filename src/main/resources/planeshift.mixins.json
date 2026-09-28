@@ -1,0 +1,28 @@
+{
+	"required": true,
+	"package": "codx.planeshift.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"mixins": [
+		"BucketSideMixin",
+		"ExampleMixin",
+		"FlowingFluidMixin",
+		"GameModeTickMixin",
+		"ItemAimMixin",
+		"MovedWronglyMixin",
+		"PlayerReachMixin",
+		"PlayerTeleportMixin",
+		"PortalOpeningAirMixin",
+		"PortalOpeningCollisionMixin",
+		"PortalOpeningPathMixin",
+		"ServerGamePacketListenerAccessor",
+		"ServerLevelBlockMixin",
+		"ServerMoveTraceMixin",
+		"UseOnContextMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	},
+	"overwrites": {
+		"requireAnnotations": true
+	}
+}
