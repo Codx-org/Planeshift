@@ -51,11 +51,17 @@ public final class CrossingTrace {
 		long now = System.currentTimeMillis();
 		long since = last == 0L ? 50L : now - last;
 		last = now;
+		// The camera the last frame drew entities against. It is the frame's, not the tick's,
+		// but a camera that has stopped following the player shows up either way — and an
+		// entity drawn against the wrong one is the whole of "everything moves with me".
+		Vec3 drawnFrom = client.gameRenderer.gameRenderState().levelRenderState
+				.cameraRenderState.pos;
 		TraceLog.line(String.format("t=%d client %s feet %.3f %.3f %.3f vel %.3f onGround %b moves-sent %d"
-						+ " since-last %dms%s",
+						+ " cam %.2f %.2f %.2f since-last %dms%s",
 				client.level.getGameTime(), client.level.dimension().identifier(),
 				at.x, at.y, at.z, moving.y, client.player.onGround(),
 				codx.planeshift.client.DoorwayCrossing.sentSinceLastAsked(),
+				drawnFrom.x, drawnFrom.y, drawnFrom.z,
 				since, since > 100 ? "  <<< STALL" : ""));
 	}
 

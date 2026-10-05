@@ -13,6 +13,8 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import codx.planeshift.Planeshift;
 import codx.planeshift.client.DestinationWorld;
 import codx.planeshift.client.interact.FarOutline;
+import org.jspecify.annotations.Nullable;
+
 import codx.planeshift.client.mixin.CameraAccessor;
 import codx.planeshift.client.mixin.GameRendererAccessor;
 import codx.planeshift.client.mixin.GameRendererResourceAccessor;
@@ -279,7 +281,7 @@ public final class DestinationRenderer {
 		state.blockOutlineRenderState = FarOutline.of(client, plane, world, camera);
 
 		Matrix4f clipped = clipAtFarPlane(new Matrix4f(frameProjection), destination.viewRotationMatrix,
-				plane, transform, eye);
+				plane, transform, eye, main.depthFar);
 		FogRenderer fog = world.fog();
 		RenderSystem.backupProjectionMatrix();
 
@@ -351,7 +353,7 @@ public final class DestinationRenderer {
 	 * one and the near facing onto the far facing, which is the whole plane.
 	 */
 	private static Matrix4f clipAtFarPlane(Matrix4f projection, Matrix4fc viewRotation,
-			Plane plane, PlaneTransform transform, Vec3 eye) {
+			Plane plane, PlaneTransform transform, Vec3 eye, float depthFar) {
 		Vec3 centre = transform.position(plane.anchor(), plane.anchor());
 		Direction facing = transform.facing(plane.facing());
 		Vec3 normal = facing.getUnitVec3();
@@ -373,17 +375,26 @@ public final class DestinationRenderer {
 		Vec3 point = normal.scale(-side).subtract(away.scale(CLIP_MARGIN));
 
 
-		obliqueNearPlane(projection, viewRotation, point, away);
+		obliqueNearPlane(projection, viewRotation, point, away, depthFar);
 		return projection;
 	}
 
 	/**
-	 * Replaces the near plane of a reverse-Z perspective projection with the plane
-	 * through {@code point} (camera-relative, world axes) whose {@code normal} points
-	 * away from the camera: Lengyel's oblique clip, written for a depth range where near
-	 * is 1 and far is 0.
+	 * Replaces the near plane of a perspective projection with the plane through
+	 * {@code point} (camera-relative, world axes) whose {@code normal} points away from
+	 * the camera: Lengyel's oblique clip.
+	 *
+	 * <p>Which clip depth this projection puts its near and far planes at is read out of the
+	 * matrix rather than assumed. The whole method turns on those two numbers — they are
+	 * what the new near plane is made to land on, and what the rest of the depth range is
+	 * stretched to fill — and they are not the same everywhere: reverse-Z over minus one to
+	 * one here, zero to one in 26.2, and whatever a machine that cannot do float depth falls
+	 * back to. Assume them and the clip keeps precisely what it was asked to throw away,
+	 * which shows up as a doorway full of the wall its far end is mounted on, on one
+	 * player's machine and not another's, with nothing in either log to say so.
 	 */
-	static void obliqueNearPlane(Matrix4f projection, Matrix4fc viewRotation, Vec3 point, Vec3 normal) {
+	static void obliqueNearPlane(Matrix4f projection, Matrix4fc viewRotation, Vec3 point, Vec3 normal,
+			float depthFar) {
 		Vector4f origin = new Vector4f((float) point.x, (float) point.y, (float) point.z, 1.0F);
 		viewRotation.transform(origin);
 
@@ -394,13 +405,10 @@ public final class DestinationRenderer {
 		float distance = -(unit.x * origin.x + unit.y * origin.y + unit.z * origin.z);
 		float cornerX = (Math.signum(unit.x) + projection.m20()) / projection.m00();
 		float cornerY = (Math.signum(unit.y) + projection.m21()) / projection.m11();
-		// What this projection actually maps the near plane and the far distance to,
-		// measured from it rather than assumed: reverse-Z over minus one to one. The
-		// reference runs on 26.2, where the far value is 0, and that one constant is the
-		// difference between a clip that works and one that keeps exactly what it should
-		// throw away.
-		float near = 1.0F;
-		float far = -1.0F;
+		float near = depthAt(projection, Camera.PROJECTION_Z_NEAR);
+		float far = depthAt(projection, depthFar);
+		measuredNear = near;
+		measuredFar = far;
 		float cornerW = (far + projection.m22()) / projection.m32();
 		float dot = unit.x * cornerX + unit.y * cornerY - unit.z + distance * cornerW;
 
@@ -413,6 +421,34 @@ public final class DestinationRenderer {
 		projection.m12(unit.y * scale);
 		projection.m22(unit.z * scale - near);
 		projection.m32(distance * scale);
+	}
+
+	/**
+	 * Where this projection puts a point {@code depth} blocks down the view axis, in clip
+	 * depth: the number the near plane is at when {@code depth} is the near distance.
+	 *
+	 * <p>Read out of the matrix, so it is right whatever range the game is using.
+	 */
+	private static float depthAt(Matrix4f projection, float depth) {
+		// View space looks down negative z.
+		float z = -depth;
+		float clip = projection.m22() * z + projection.m32();
+		float w = projection.m23() * z + projection.m33();
+
+		return w == 0.0F ? clip : clip / w;
+	}
+
+	private static float measuredNear = Float.NaN;
+
+	private static float measuredFar = Float.NaN;
+
+	/**
+	 * What the last far side's projection turned out to put its near and far planes at, for
+	 * {@code /planeshiftwhy}. Null until a far side has been drawn.
+	 */
+	public static @Nullable String depthRange() {
+		return Float.isNaN(measuredNear) ? null
+				: String.format(java.util.Locale.ROOT, "near %.2f, far %.2f", measuredNear, measuredFar);
 	}
 
 	/** Lets go of what is held between worlds, and lets a failed pass be tried again. */

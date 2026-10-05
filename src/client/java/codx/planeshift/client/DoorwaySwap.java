@@ -177,6 +177,15 @@ public final class DoorwaySwap {
 		// is gone before the renderer ever looks at it.
 		((LevelExtractorAccessor) world.extractor()).planeshift$setShouldResetSkyRenderer(true);
 		((LevelExtractorAccessor) client.levelExtractor).planeshift$setShouldResetSkyRenderer(true);
+		// And on the states themselves, for the one frame that can slip between here and the
+		// next extract. An extract writes its own copy over the state's, so the flag has to
+		// live in both places: on the extractor for every frame after this one, and on the
+		// state for the frame that may be drawn before any extract runs. Missing that single
+		// frame means the arriving renderer draws its sky into the offscreen image it was
+		// built against — which by then has been freed, and that is a null colour attachment
+		// and a crash in vanilla's own sky pass, with nothing of this mod in the stack.
+		main.shouldResetSkyRenderer = true;
+		spare.shouldResetSkyRenderer = true;
 
 		// Assigned, not setLevel: that would run updateLevelInEngines, which is exactly
 		// what throws the compiled sections away.

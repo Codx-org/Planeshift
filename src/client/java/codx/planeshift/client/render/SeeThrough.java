@@ -51,18 +51,8 @@ public final class SeeThrough {
 	 */
 	private static final double EDGE = 0.5;
 
-	/**
-	 * How much of the fade distance is spent actually fading, as a fraction of it.
-	 *
-	 * <p>A far side that simply stops is a line in the air you can step back and forth
-	 * across, and the world beyond appears and disappears each time. Dissolving over the
-	 * second half of its reach means the only thing distance does is make it fainter — and
-	 * at the point where it is gone, there was nothing left of it to lose.
-	 */
-	private static final double FADES_OVER = 0.5;
-
-	/** One plane drawn this frame, the image its far side went into, and how solid it is. */
-	private record Shown(Plane plane, TextureTarget image, float fade) {
+	/** One plane drawn this frame, the image its far side went into, and how far it may see. */
+	private record Shown(Plane plane, TextureTarget image, float reach) {
 	}
 
 	/** This frame's planes, nearest first. Filled by {@link #beforeLevel}, drained after. */
@@ -173,11 +163,12 @@ public final class SeeThrough {
 			}
 
 			ghosts(client, renderer, plane, world);
-			shown.add(new Shown(plane, image, fade(client, plane)));
+			shown.add(new Shown(plane, image, reach(client, plane)));
 		}
 
 		for (Shown one : shown) {
 			showing.add(one.plane());
+			skips.remove(one.plane());
 		}
 
 		if (!shown.isEmpty() && !drawn) {
@@ -226,11 +217,13 @@ public final class SeeThrough {
 			for (int i = shown.size() - 1; i >= 0; i--) {
 				Shown one = shown.get(i);
 				PlaneComposite.draw(renderer.mainRenderTarget(), one.image(), camera,
-						projection, one.plane(), one.fade());
+						projection, one.plane(), one.reach());
 			}
 		} catch (RuntimeException e) {
 			Planeshift.LOGGER.error("Showing a plane's far side failed; waiting {}ms before"
 					+ " trying again", quietFor, e);
+			lastFailure = e.getClass().getSimpleName()
+					+ (e.getMessage() == null ? "" : ": " + e.getMessage());
 			quietUntil = System.currentTimeMillis() + quietFor;
 			quietFor = Math.min(LONGEST_QUIET, quietFor * 4);
 		} finally {
@@ -303,6 +296,14 @@ public final class SeeThrough {
 
 		found.sort(Comparator.comparingDouble(plane -> plane.distanceTo(eye)));
 		int wanted = PlaneshiftConfig.howManyOf(found.size());
+
+		// Being nearer is the whole of why the others won, and it is invisible: a player
+		// looking at two doorways and seeing through one of them is looking at a setting.
+		for (int i = wanted; i < found.size(); i++) {
+			say(found.get(i), wanted + " nearer opening(s) are being shown, which is all"
+					+ " planes_seen_through allows");
+		}
+
 		return found.subList(0, wanted);
 	}
 
@@ -336,11 +337,18 @@ public final class SeeThrough {
 	 * player. Once a second is enough to tell which, and costs nothing when tracing is off.
 	 */
 	private static void say(Plane plane, String why) {
+		long now = System.currentTimeMillis();
+		Skip was = skips.get(plane);
+		// Kept whether or not anything is listening, because the question "why is this
+		// doorway showing nothing" is asked long after the frame that decided it — by a
+		// player typing /planeshift why, and by the warning below.
+		skips.put(plane, new Skip(why, was != null && was.why().equals(why) ? was.since() : now));
+		warn(plane, why, skips.get(plane).since(), now);
+
 		if (!codx.planeshift.debug.TraceLog.on()) {
 			return;
 		}
 
-		long now = System.currentTimeMillis();
 
 		// Per plane, so that a far one being off screen does not hide why the near one is
 		// undrawn — which is exactly the pair of answers worth having at once.
@@ -356,20 +364,104 @@ public final class SeeThrough {
 
 	private static final java.util.Map<Plane, Long> lastSaid = new java.util.WeakHashMap<>();
 
+	/** A reason a plane is showing nothing, and the moment it started being the reason. */
+	private record Skip(String why, long since) {
+	}
+
 	/**
-	 * How solidly to show a plane's far side: whole until it is near the end of its range,
-	 * then dissolving into whatever this world drew behind it.
+	 * The standing reason each plane is showing nothing, kept past the frame that decided it.
+	 *
+	 * <p>Every reason looks the same from the outside — the opening simply shows the wall —
+	 * so without this the only way to tell "out of range" from "nothing streamed yet" is to
+	 * have been tracing at the time. Kept always, so {@code /planeshift why} can answer
+	 * afterwards and so a failure that lasts can announce itself.
 	 */
-	private static float fade(Minecraft client, Plane plane) {
-		if (client.player == null) {
-			return 1.0F;
+	private static final java.util.Map<Plane, Skip> skips = new java.util.WeakHashMap<>();
+
+	/** When each reason was last written to the log, so a standing one says itself once. */
+	private static final java.util.Map<String, Long> lastWarned = new java.util.HashMap<>();
+
+	/** How long a reason must hold before it is worth the game log. */
+	private static final long STUCK_AFTER = 5_000L;
+
+	/** And how long before the same reason is worth repeating. */
+	private static final long REPEAT_AFTER = 60_000L;
+
+	private static @Nullable String lastFailure;
+
+	/**
+	 * Says, once, into the game log, that a doorway has been showing nothing for a while.
+	 *
+	 * <p>The trace file answers this too, and better — but it has to be turned on before
+	 * the thing goes wrong, which is never how a report arrives. This is what makes
+	 * {@code latest.log} enough on its own.
+	 */
+	private static void warn(Plane plane, String why, long since, long now) {
+		if (now - since < STUCK_AFTER) {
+			return;
 		}
 
-		double range = PlaneshiftConfig.planeFadeDistance(
-				client.options.getEffectiveRenderDistance());
-		double away = plane.distanceTo(client.player.getEyePosition());
+		String key = why + " @ " + plane.anchor();
 
-		return (float) net.minecraft.util.Mth.clamp((range - away) / (range * FADES_OVER), 0.0, 1.0);
+		if (now - lastWarned.getOrDefault(key, 0L) < REPEAT_AFTER) {
+			return;
+		}
+
+		lastWarned.put(key, now);
+		Planeshift.LOGGER.warn("A portal at {} {} {} has shown nothing for {}s: {}."
+				+ " Run /planeshift why for the rest of the picture.",
+				String.format("%.1f", plane.anchor().x), String.format("%.1f", plane.anchor().y),
+				String.format("%.1f", plane.anchor().z), (now - since) / 1000L, why);
+	}
+
+	/**
+	 * Why this plane is showing nothing, in words, or {@code null} if it is being drawn.
+	 *
+	 * <p>For {@code /planeshift why}: the whole point is that a player who can see the
+	 * problem cannot see any of the reasons for it.
+	 */
+	public static @Nullable String whyNotShowing(Plane plane) {
+		if (showing.contains(plane)) {
+			return null;
+		}
+
+		Skip skip = skips.get(plane);
+
+		if (skip == null) {
+			return "not looked at this frame";
+		}
+
+		return skip.why() + ", for " + (System.currentTimeMillis() - skip.since()) / 1000L + "s";
+	}
+
+	/** What went wrong the last time the far sides were shown, if anything has. */
+	public static @Nullable String lastFailure() {
+		return System.currentTimeMillis() < quietUntil
+				? lastFailure + " (waiting before trying again)"
+				: lastFailure;
+	}
+
+	/**
+	 * How far a pixel may be looking through this plane before it has faded to nothing.
+	 *
+	 * <p>The fading itself is per pixel, in the composite: what matters is how far away the
+	 * part of the plane a ray meets is, not how far away the plane is. For a doorway those
+	 * are nearly the same number. For the floor of a world they are not.
+	 */
+	private static float reach(Minecraft client, Plane plane) {
+		if (client.player == null) {
+			return Float.MAX_VALUE;
+		}
+
+		int chunks = client.options.getEffectiveRenderDistance();
+		// An edgeless plane is the floor of a world, and how far off you can see one is not
+		// a matter of taste: from the surface of the Overworld the world below is a hundred
+		// and fifty blocks down, and a fade meant for doorways across a room puts it out
+		// long before you are anywhere near it. The doorway fade is for doorways; the floor
+		// of the world is shown as far as it is prepared.
+		return (float) (plane.shape() instanceof PlaneShape.Infinite
+				? PlaneshiftConfig.planeVisibleDistance(chunks)
+				: PlaneshiftConfig.planeFadeDistance(chunks));
 	}
 
 	/** This plane as the server names it, or -1 if the client has not been told. */

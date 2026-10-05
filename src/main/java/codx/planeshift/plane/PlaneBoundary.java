@@ -64,6 +64,27 @@ public record PlaneBoundary(Plane a, Plane b) {
 		return between(levelA, shapeA, facingA, levelB, shapeB, facingB, turn(facingA, facingB));
 	}
 
+	/**
+	 * Whether two openings facing these ways can be joined at all.
+	 *
+	 * <p>A transform turns about the vertical and nothing else. Two upright openings can
+	 * always be joined, and a floor to a ceiling — falling into the one and out of the other
+	 * is the same direction of travel and needs no turn. A floor to another floor cannot:
+	 * leaving the second means travelling <em>up</em> out of it, and no yaw maps down to up.
+	 *
+	 * <p>{@link #linking} does not refuse such a pair, because a plane has no way to report a
+	 * problem; it falls back to no rotation and gives you a doorway that carries you out
+	 * through the floor of the far side, inside the ground, where there is nothing to see.
+	 * Anything letting a player pick both ends should ask this first and say no.
+	 */
+	public static boolean canLink(Direction a, Direction b) {
+		if (a.getAxis().isVertical() != b.getAxis().isVertical()) {
+			return false;
+		}
+
+		return !a.getAxis().isVertical() || a == b.getOpposite();
+	}
+
 	/** The quarter turn taking travel into {@code a} to travel out of {@code b}. */
 	private static Rotation turn(Direction a, Direction b) {
 		Direction entering = a.getOpposite();

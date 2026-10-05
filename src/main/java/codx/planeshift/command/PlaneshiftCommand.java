@@ -31,6 +31,8 @@ import net.minecraft.commands.arguments.DimensionArgument;
 import net.minecraft.commands.arguments.HexColorArgument;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
+
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
@@ -73,6 +75,12 @@ public final class PlaneshiftCommand {
 
 	public static void register(CommandDispatcher<CommandSourceStack> dispatcher,
 			CommandBuildContext buildContext, Commands.CommandSelection selection) {
+		// Its own command, and the only one here anybody may run: it changes nothing, reads
+		// nothing but the asking player's own game, and the people who need it are the ones
+		// reporting that something looks wrong on a server they do not run.
+		dispatcher.register(Commands.literal("planeshiftwhy")
+				.executes(PlaneshiftCommand::why));
+
 		dispatcher.register(Commands.literal("planeshift")
 				.requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
 				.then(Commands.literal("corner")
@@ -252,6 +260,17 @@ public final class PlaneshiftCommand {
 			return Command.SINGLE_SUCCESS;
 		}
 
+		if (!PlaneBoundary.canLink(waiting.facing(), facing)) {
+			// Kept, not dropped: the first opening is still where they put it, and the
+			// answer is to place the second one somewhere the turn can be expressed.
+			PENDING_LINK.put(player.getUUID(), waiting);
+			source.sendFailure(Component.literal("Openings facing " + waiting.facing().getName()
+					+ " and " + facing.getName() + " cannot be joined: a doorway turns about the "
+					+ "vertical only, so a floor pairs with a ceiling, and an upright opening "
+					+ "with another upright one. The first one is still waiting."));
+			return 0;
+		}
+
 		PlaneBoundary boundary = PlaneBoundary.linking(
 				waiting.dimension(), waiting.shape(), waiting.facing(),
 				here.dimension(), shape, facing);
@@ -340,7 +359,18 @@ public final class PlaneshiftCommand {
 		return planes.size();
 	}
 
-	/** Also drops a half-finished corner, the only way out of a bad first pick. */
+	/**
+	 * Removes the planes placed by hand here. Also drops a half-finished corner, the only
+	 * way out of a bad first pick.
+	 *
+	 * <p>By hand and no others. Every other plane in the world belongs to whichever mod
+	 * supplies it — a portal gun holds its pair, a stack of worlds derives its boundaries
+	 * from the worlds themselves — and a plane taken from under its owner would be back
+	 * the moment the owner was asked again. So the count is of what this command placed,
+	 * and it says as much when there is anything else about: "cleared nothing" and "there
+	 * is nothing here" look identical otherwise, and the first is what somebody sees when
+	 * they try to clear a portal they shot.
+	 */
 	private static int clear(CommandContext<CommandSourceStack> ctx) {
 		CommandSourceStack source = ctx.getSource();
 		int removed = DebugPlanes.clear(source.getLevel());
@@ -349,7 +379,19 @@ public final class PlaneshiftCommand {
 			PENDING.remove(source.getPlayer().getUUID());
 		}
 
-		source.sendSuccess(() -> Component.literal("Cleared " + removed + " plane(s)."), false);
+		int[] others = {0};
+		Planes.store(source.getLevel()).forEachKnown(each -> others[0]++);
+
+		String message = "Cleared " + removed + " plane(s) placed with this command.";
+
+		if (others[0] > 0) {
+			message += " The " + others[0] + " still here belong to the mod that supplies them"
+					+ " — a portal gun's pair, a world's own boundary — and go the way that mod"
+					+ " takes them away, not this one.";
+		}
+
+		String said = message;
+		source.sendSuccess(() -> Component.literal(said), false);
 		return Command.SINGLE_SUCCESS;
 	}
 
@@ -434,6 +476,21 @@ public final class PlaneshiftCommand {
 				+ (cleared > 0 ? ", clearing " + cleared + " old plane(s)" : "") + ": the end above "
 				+ buildTop(overworld) + ", the overworld from " + floor(overworld) + " up, the nether "
 				+ "below " + buildTop(nether) + "."), false);
+		return Command.SINGLE_SUCCESS;
+	}
+
+	/**
+	 * Asks this player's own game why the doorways around them are showing what they are.
+	 *
+	 * <p>Answered on the client, because that is where every one of those decisions is
+	 * made: what is in range, what has streamed, what was drawn, and what the setting
+	 * allows. The server only knows what it agreed to send.
+	 */
+	private static int why(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+		ServerPlayer player = ctx.getSource().getPlayerOrException();
+		ServerPlayNetworking.send(player, new codx.planeshift.network.WhyPayload());
+		ctx.getSource().sendSuccess(() -> Component.literal(
+				"Asking your game about the doorways around you; the answer follows."), false);
 		return Command.SINGLE_SUCCESS;
 	}
 

@@ -11,6 +11,7 @@
 		"ClientUseOnContextMixin",
 		"EntityAccessor",
 		"ExampleClientMixin",
+		"FarSideSilenceMixin",
 		"FeatureFrameAccessor",
 		"GameRendererAccessor",
 		"GameRendererMixin",

@@ -58,11 +58,12 @@ public final class PlaneshiftConfig {
 	/**
 	 * How far from a plane its far side has faded to nothing, in blocks.
 	 *
-	 * <p>Far enough to look through a doorway from across a room, near enough that the
-	 * underside of the world above is something you see when you have just fallen out of it
-	 * rather than something hanging over the whole sky.
+	 * <p>Tied to the visible distance by default, so a doorway is worth looking through for
+	 * exactly as long as it is worth preparing, and the fade is only there to stop it
+	 * switching off at a line you can step back and forth across. A smaller number is a
+	 * taste, not a saving: the far side is still drawn, it is only drawn fainter.
 	 */
-	private static final int DEFAULT_FADE = 64;
+	private static final int DEFAULT_FADE = -1;
 
 	private static final String DETAIL_KEY = "plane_detail_at_range";
 
@@ -144,6 +145,11 @@ public final class PlaneshiftConfig {
 
 	/**
 	 * How far from a plane its far side has faded to nothing.
+	 *
+	 * <p>Doorways only. A boundary between two stacked worlds has no edges and is under your
+	 * feet as well as out at the horizon, so a number meant for a doorway across a room puts
+	 * the world below out of sight long before you are anywhere near it; those use the
+	 * visible distance. See {@code SeeThrough.reach}.
 	 *
 	 * <p>Separate from the visible distance, because the two answer different questions. The
 	 * visible distance is how far away a doorway is worth preparing at all — a cost. This is
@@ -302,9 +308,12 @@ public final class PlaneshiftConfig {
 
 		if (!root.has(FADE_KEY)) {
 			root.addProperty("_" + FADE_KEY,
-					"How far from a plane its far side has faded to nothing, in blocks. It is "
-							+ "whole up to half of this and gone at it. -1 spreads the fade across "
-							+ "the whole visible distance instead.");
+					"How far a doorway lets you see, in blocks: whole up to half of this and gone "
+							+ "at it, measured where you are looking rather than to the doorway "
+							+ "itself. -1 uses the visible distance instead. It does not apply to "
+							+ "a boundary between two stacked worlds, which is a floor rather than "
+							+ "a doorway and is shown as far as it is prepared - set "
+							+ "plane_visible_distance for those.");
 		}
 
 		root.addProperty(FADE_KEY, planeFadeDistance);

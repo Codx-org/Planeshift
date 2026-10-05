@@ -14,6 +14,7 @@ import codx.planeshift.network.CrossNet;
 import codx.planeshift.network.DestChunkPayload;
 import codx.planeshift.network.DestEntityBatch;
 import codx.planeshift.network.TracePayload;
+import codx.planeshift.network.WhyPayload;
 import codx.planeshift.network.PlanesPayload;
 import codx.planeshift.network.WatchNet;
 import codx.planeshift.registry.Planes;
@@ -64,6 +65,7 @@ public class Planeshift implements ModInitializer {
 		codx.planeshift.network.FarNet.register();
 		ClientNote.register();
 		TracePayload.register();
+		WhyPayload.register();
 		PlaneWatches.init();
 		DestinationStreamer.init();
 		codx.planeshift.network.FarNet.init();

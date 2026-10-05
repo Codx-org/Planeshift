@@ -61,6 +61,9 @@ public final class DestinationInbox {
 	/** The level to put back when the current run of entity packets ends. */
 	private static @Nullable ClientLevel routedFrom;
 
+	/** And the level it was lent to, so the run knows whether it is still the one lending. */
+	private static @Nullable ClientLevel routedTo;
+
 	/**
 	 * The level the player is really in, whatever {@code Minecraft.level} says right now.
 	 *
@@ -113,12 +116,7 @@ public final class DestinationInbox {
 		}
 
 		if (!marker.begin()) {
-			if (routedFrom != null) {
-				client.level = routedFrom;
-				((ClientPacketListenerAccessor) client.getConnection()).planeshift$setLevel(routedFrom);
-				routedFrom = null;
-			}
-
+			putBack(client, "the run ended");
 			return;
 		}
 
@@ -131,8 +129,37 @@ public final class DestinationInbox {
 		}
 
 		routedFrom = client.level;
+		routedTo = world.level();
 		client.level = world.level();
 		((ClientPacketListenerAccessor) client.getConnection()).planeshift$setLevel(world.level());
+	}
+
+	/**
+	 * Ends a run of far-side packets, putting the player's own level back.
+	 *
+	 * <p>Only if the level is still the one that was lent out. A packet inside the run can
+	 * change which level the player is in — a respawn, which is how a dimension change
+	 * arrives — and putting the old one back over the top of that is how the client ends up
+	 * in a world the server does not think it is in: every move it sends is refused, every
+	 * teleport it is sent is ignored, and the entities it is told about are applied to the
+	 * wrong world entirely. So a run that finds the level changed underneath it lets go of
+	 * it instead.
+	 */
+	private static void putBack(Minecraft client, String why) {
+		if (routedFrom == null || client.getConnection() == null) {
+			return;
+		}
+
+		if (client.level == routedTo) {
+			client.level = routedFrom;
+			((ClientPacketListenerAccessor) client.getConnection()).planeshift$setLevel(routedFrom);
+		} else {
+			Planeshift.LOGGER.warn("A far side's packets changed which level the player is in;"
+					+ " leaving them where the change put them ({})", why);
+		}
+
+		routedFrom = null;
+		routedTo = null;
 	}
 
 	/** A watch is open and the server has described the dimension: build a world for it. */
@@ -216,6 +243,14 @@ public final class DestinationInbox {
 
 	/** Runs the disposal delay down, and keeps what is held moving. */
 	public static void tick() {
+		// A run is a burst of packets and nothing else; one still open when a tick begins is
+		// one whose closing marker never came, and every packet from here on would be
+		// handled against a far side. Cheap to check, and the alternative is a client that
+		// never recovers.
+		if (routedFrom != null) {
+			putBack(Minecraft.getInstance(), "no closing marker");
+		}
+
 		for (DestinationWorld world : distinct()) {
 			world.tick();
 		}
@@ -326,17 +361,6 @@ public final class DestinationInbox {
 		return behind != null && behind.dimension().equals(dimension) ? behind : null;
 	}
 
-	/**
-	 * Whether the level walked out of is this dimension.
-	 *
-	 * <p>Only that one. A watch's world is held too, but a watch is exactly what the caller
-	 * is deciding whether to open, so answering yes for one would close the watch that is
-	 * keeping the answer true.
-	 */
-	public static boolean keptBehind(ResourceKey<Level> dimension) {
-		return behind != null && behind.dimension().equals(dimension);
-	}
-
 	/** Whether anything is held for this dimension, without taking it. */
 	public static boolean holds(ResourceKey<Level> dimension) {
 		if (behind != null && behind.dimension().equals(dimension)) {
@@ -371,6 +395,7 @@ public final class DestinationInbox {
 		closeAll();
 		behind = null;
 		routedFrom = null;
+		routedTo = null;
 	}
 
 	/** A short description of what is held, for the log. */

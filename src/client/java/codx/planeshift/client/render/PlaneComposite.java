@@ -22,6 +22,7 @@ import com.mojang.renderpearl.api.textures.GpuSampler;
 import codx.planeshift.Planeshift;
 import codx.planeshift.plane.Plane;
 
+import net.minecraft.client.Camera;
 import net.minecraft.client.renderer.BindGroupLayouts;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.resources.Identifier;
@@ -61,12 +62,14 @@ final class PlaneComposite {
 	 * @param main the frame's own target, drawn into
 	 * @param image the far side, already drawn
 	 * @param proj the projection this frame was drawn with, view bob and all
-	 * @param fade how solidly to show it, one near the opening and nothing at the far end
-	 *             of its range — so a doorway dissolves into the sky behind it instead of
-	 *             switching off at a line you can walk back and forth across
+	 * @param reach how far a pixel's view through the opening may be before it has faded to
+	 *              nothing, in blocks. Judged where the ray meets the plane rather than at the
+	 *              plane as a whole: an edgeless plane is under your feet and also out at the
+	 *              horizon, and the part of it at the horizon is thousands of blocks away
+	 *              through nothing but sky — which is a dark band painted over it
 	 */
 	static void draw(RenderTarget main, TextureTarget image, CameraRenderState camera,
-			Matrix4f proj, Plane plane, float fade) {
+			Matrix4f proj, Plane plane, float reach) {
 		TextureTarget copied = depth(main.width, main.height);
 		// The frame's own depth texture is an attachment while the frame is being drawn,
 		// and an attachment cannot also be sampled. A copy can.
@@ -82,11 +85,21 @@ final class PlaneComposite {
 		packed.setColumn(0, column(centre, 0.0F));
 		packed.setColumn(1, column(opening.right(), 0.0F));
 		packed.setColumn(2, column(opening.up(), 0.0F));
-		packed.setColumn(3, new Vector4f(opening.halfWidth(), opening.halfHeight(), GUARD, fade));
+		packed.setColumn(3, new Vector4f(opening.halfWidth(), opening.halfHeight(), GUARD, reach));
+
+		// How to read the depth texture back, measured from the projection that wrote it.
+		// A depth texture always holds zero to one; what that means in clip depth does not
+		// follow. Here it is reverse-Z over minus one to one, so the stored half has to be
+		// doubled and shifted; elsewhere it is reverse-Z over zero to one, where the stored
+		// value is already the answer and doubling it puts every surface of this world at
+		// twice its distance. That reads as the wall behind an opening standing in front of
+		// it, and the opening shows the wall rather than the way through.
+		float floor = Math.min(depthAt(proj, Camera.PROJECTION_Z_NEAR), depthAt(proj, camera.depthFar));
+		float ceiling = Math.max(depthAt(proj, Camera.PROJECTION_Z_NEAR), depthAt(proj, camera.depthFar));
 
 		GpuBufferSlice transforms = RenderSystem.getDynamicUniforms().writeTransform(inverse,
-				column(opening.normal(), 0.0F),
-				new Vector3f(main.width, main.height, 1.0F),
+				column(opening.normal(), floor),
+				new Vector3f(main.width, main.height, ceiling - floor),
 				packed);
 		GpuSampler sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
 
@@ -100,6 +113,18 @@ final class PlaneComposite {
 			// screen out of nothing but their indices.
 			pass.draw(3, 1, 0, 0);
 		}
+	}
+
+	/**
+	 * Where this projection puts a point {@code depth} blocks down the view axis, in clip
+	 * depth. The same reading {@code DestinationRenderer} takes, for the same reason.
+	 */
+	private static float depthAt(Matrix4f projection, float depth) {
+		float z = -depth;
+		float clip = projection.m22() * z + projection.m32();
+		float w = projection.m23() * z + projection.m33();
+
+		return w == 0.0F ? clip : clip / w;
 	}
 
 	private static Vector4f column(Vec3 value, float w) {

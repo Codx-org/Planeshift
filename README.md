@@ -85,6 +85,25 @@ Read whichever is closest in shape to what you are building.
 `config/planeshift.json` sets how many planes may be seen through at once, how far away
 they stay visible, and whether entities and fluids cross them.
 
+## When a doorway shows nothing
+
+A doorway that draws nothing looks exactly like a doorway that draws nothing, whatever the
+cause — out of range, nothing streamed yet, the server turning the request down, one too
+many for `planes_seen_through`, or the pass that draws it failing. All of that is decided
+on your own machine and none of it is visible.
+
+**`/planeshiftwhy`** says which it is, in chat, for every plane near you:
+
+```
+planeshift: 2 plane(s) known here, 2 of them portals; 2 shown at once; visible to 256 blocks, faded by 256; render distance 16
+  #2 opening east at -29.0 139.0 -73.5, 25.5 blocks off: off screen, for 7s; watch open, 545 column(s) streamed
+  #3 opening north at -3.5 139.0 -34.0, 39.5 blocks off: drawn.
+```
+
+Anybody may run it — it changes nothing and reads only your own game — and what it says
+also goes to the server's log. A doorway that has shown nothing for five seconds says so in
+`latest.log` on its own, without being asked.
+
 ## Status
 
 Under active development. Seeing through, crossing and interacting all work; expect rough

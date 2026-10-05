@@ -76,6 +76,13 @@ public final class DestinationWatcher {
 					&& !openByHandle.containsKey(payload.handle());
 			Planeshift.LOGGER.info("Watch {} {}: {}", payload.handle(),
 					refused ? "refused" : "closed", payload.reason());
+
+			if (refused) {
+				// Kept for /planeshift why. A refusal is the server's half of the answer,
+				// and it arrives once, seconds before anybody thinks to ask.
+				lastRefusal = payload.reason();
+			}
+
 			// The world behind it goes with it, or every watch that ever opened is still
 			// holding a renderer and a level's worth of meshed chunks.
 			DestinationInbox.close(payload.handle());
@@ -162,6 +169,18 @@ public final class DestinationWatcher {
 		return openByHandle.containsValue(planeId);
 	}
 
+	/** Whether a watch on this plane has been asked for, opened or not. */
+	public static boolean isAsked(int planeId) {
+		return planeByHandle.containsValue(planeId);
+	}
+
+	/** The last reason the server gave for turning a watch down, if it ever has. */
+	public static @org.jspecify.annotations.Nullable String lastRefusal() {
+		return lastRefusal;
+	}
+
+	private static @org.jspecify.annotations.Nullable String lastRefusal;
+
 	public static void forget() {
 		planeByHandle.clear();
 		openByHandle.clear();
@@ -195,20 +214,15 @@ public final class DestinationWatcher {
 				continue;
 			}
 
-			// A plane whose far side is a dimension already held whole — the one just
-			// walked out of — needs no watch of its own: that level is still here with
-			// its renderer, and DestinationInbox hands it straight back.
+			// Every portal in range is watched, including one leading back to the world
+			// just walked out of. That world is held whole and needs no rebuilding — but it
+			// does need a watch, because a watch is what keeps the server loading its chunks
+			// and relaying what happens in them. Skipping it left the view back frozen at
+			// the moment of leaving: lava that had been pouring stayed where it was, mobs
+			// stood still, and nothing ever moved again until you walked back in.
 			//
-			// A plane leading back into the dimension the player is standing in does need
-			// one. It is tempting to think it does not, since that world is right here,
-			// but the level the player is in is being drawn by the renderer that is
-			// drawing this frame; the far side needs a level and a renderer of its own to
-			// be drawn from another eye inside the same frame. Two portals on two walls of
-			// one room are the ordinary case of that, so skipping it left them blank.
-			if (DestinationInbox.keptBehind(
-					identified.plane().transform().orElseThrow().target())) {
-				continue;
-			}
+			// Nothing is rebuilt. DestinationInbox.existing hands the kept level to the new
+			// watch and re-centres it, so the watch adopts the world that is already there.
 
 			found.add(identified);
 		}

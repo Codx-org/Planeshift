@@ -30,6 +30,7 @@ public class PlaneshiftClient implements ClientModInitializer {
 		// The player's own choice, until a server sends one with /planeshift color.
 		PlaneDebugRenderer.setStyle(PlaneshiftConfig.planeRainbow(), PlaneshiftConfig.planeColor());
 		codx.planeshift.client.debug.CrossingTrace.init();
+		codx.planeshift.client.debug.WhyReport.init();
 		DestinationWatcher.init();
 		DestinationInbox.init();
 
